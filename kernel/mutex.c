@@ -80,13 +80,13 @@ void _impl_k_mutex_init(struct k_mutex *mutex)
 	mutex->owner = NULL;
 	mutex->lock_count = 0;
 
-	sys_trace_void(SYS_TRACE_ID_MUTEX_INIT);
+	//sys_trace_void(SYS_TRACE_ID_MUTEX_INIT);
 
 	_waitq_init(&mutex->wait_q);
 
 	SYS_TRACING_OBJ_INIT(k_mutex, mutex);
 	_k_object_init(mutex);
-	sys_trace_end_call(SYS_TRACE_ID_MUTEX_INIT);
+	//sys_trace_end_call(SYS_TRACE_ID_MUTEX_INIT);
 }
 
 #ifdef CONFIG_USERSPACE
@@ -126,7 +126,7 @@ int _impl_k_mutex_lock(struct k_mutex *mutex, s32_t timeout)
 	int new_prio;
 	k_spinlock_key_t key;
 
-	sys_trace_void(SYS_TRACE_ID_MUTEX_LOCK);
+	//sys_trace_void(SYS_TRACE_ID_MUTEX_LOCK);
 	_sched_lock();
 
 	if (likely((mutex->lock_count == 0U) || (mutex->owner == _current))) {
@@ -145,7 +145,7 @@ int _impl_k_mutex_lock(struct k_mutex *mutex, s32_t timeout)
 			mutex->owner_orig_prio);
 
 		k_sched_unlock();
-		sys_trace_end_call(SYS_TRACE_ID_MUTEX_LOCK);
+		//sys_trace_end_call(SYS_TRACE_ID_MUTEX_LOCK);
 
 		return 0;
 	}
@@ -154,7 +154,7 @@ int _impl_k_mutex_lock(struct k_mutex *mutex, s32_t timeout)
 
 	if (unlikely(timeout == (s32_t)K_NO_WAIT)) {
 		k_sched_unlock();
-		sys_trace_end_call(SYS_TRACE_ID_MUTEX_LOCK);
+		//sys_trace_end_call(SYS_TRACE_ID_MUTEX_LOCK);
 		return -EBUSY;
 	}
 
@@ -178,7 +178,7 @@ int _impl_k_mutex_lock(struct k_mutex *mutex, s32_t timeout)
 
 	if (got_mutex == 0) {
 		k_sched_unlock();
-		sys_trace_end_call(SYS_TRACE_ID_MUTEX_LOCK);
+		//sys_trace_end_call(SYS_TRACE_ID_MUTEX_LOCK);
 		return 0;
 	}
 
@@ -201,7 +201,7 @@ int _impl_k_mutex_lock(struct k_mutex *mutex, s32_t timeout)
 
 	k_sched_unlock();
 
-	sys_trace_end_call(SYS_TRACE_ID_MUTEX_LOCK);
+	//sys_trace_end_call(SYS_TRACE_ID_MUTEX_LOCK);
 	return -EAGAIN;
 }
 
@@ -220,7 +220,7 @@ void _impl_k_mutex_unlock(struct k_mutex *mutex)
 	__ASSERT(mutex->lock_count > 0U, "");
 	__ASSERT(mutex->owner == _current, "");
 
-	sys_trace_void(SYS_TRACE_ID_MUTEX_UNLOCK);
+	//sys_trace_void(SYS_TRACE_ID_MUTEX_UNLOCK);
 	_sched_lock();
 
 	RECORD_STATE_CHANGE();
