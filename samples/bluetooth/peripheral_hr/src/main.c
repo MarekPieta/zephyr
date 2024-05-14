@@ -18,6 +18,9 @@
 #include <zephyr/bluetooth/services/bas.h>
 #include <zephyr/bluetooth/services/hrs.h>
 
+#include <zephyr/logging/log.h>
+LOG_MODULE_REGISTER(main);
+
 static bool hrf_ntf_enabled;
 
 static const struct bt_data ad[] = {
@@ -46,9 +49,9 @@ static ATOMIC_DEFINE(state, 2U);
 static void connected(struct bt_conn *conn, uint8_t err)
 {
 	if (err) {
-		printk("Connection failed (err 0x%02x)\n", err);
+		LOG_INF("Connection failed (err 0x%02x)", err);
 	} else {
-		printk("Connected\n");
+		LOG_INF("Connected");
 
 		(void)atomic_set_bit(state, STATE_CONNECTED);
 	}
@@ -56,7 +59,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
-	printk("Disconnected (reason 0x%02x)\n", reason);
+	LOG_INF("Disconnected (reason 0x%02x)", reason);
 
 	(void)atomic_set_bit(state, STATE_DISCONNECTED);
 }
@@ -70,7 +73,7 @@ static void hrs_ntf_changed(bool enabled)
 {
 	hrf_ntf_enabled = enabled;
 
-	printk("HRS notification status changed: %s\n",
+	LOG_INF("HRS notification status changed: %s",
 	       enabled ? "enabled" : "disabled");
 }
 
@@ -84,7 +87,7 @@ static void auth_cancel(struct bt_conn *conn)
 
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
-	printk("Pairing cancelled: %s\n", addr);
+	LOG_INF("Pairing cancelled: %s", addr);
 }
 
 static struct bt_conn_auth_cb auth_cb_display = {
@@ -144,20 +147,20 @@ static int blink_setup(void)
 {
 	int err;
 
-	printk("Checking LED device...");
+	LOG_INF("Checking LED device...");
 	if (!gpio_is_ready_dt(&led)) {
-		printk("failed.\n");
+		LOG_INF("failed.");
 		return -EIO;
 	}
-	printk("done.\n");
+	LOG_INF("done.");
 
-	printk("Configuring GPIO pin...");
+	LOG_INF("Configuring GPIO pin...");
 	err = gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
 	if (err) {
-		printk("failed.\n");
+		LOG_INF("failed.");
 		return -EIO;
 	}
-	printk("done.\n");
+	LOG_INF("done.");
 
 	k_work_init_delayable(&blink_work, blink_timeout);
 
@@ -166,7 +169,7 @@ static int blink_setup(void)
 
 static void blink_start(void)
 {
-	printk("Start blinking LED...\n");
+	LOG_INF("Start blinking LED...");
 	led_is_on = false;
 	gpio_pin_set(led.port, led.pin, (int)led_is_on);
 	k_work_schedule(&blink_work, BLINK_ONOFF);
@@ -176,7 +179,7 @@ static void blink_stop(void)
 {
 	struct k_work_sync work_sync;
 
-	printk("Stop blinking LED.\n");
+	LOG_INF("Stop blinking LED.");
 	k_work_cancel_delayable_sync(&blink_work, &work_sync);
 
 	/* Keep LED on */
@@ -192,21 +195,21 @@ int main(void)
 
 	err = bt_enable(NULL);
 	if (err) {
-		printk("Bluetooth init failed (err %d)\n", err);
+		LOG_INF("Bluetooth init failed (err %d)", err);
 		return 0;
 	}
 
-	printk("Bluetooth initialized\n");
+	LOG_INF("Bluetooth initialized");
 
 	bt_conn_auth_cb_register(&auth_cb_display);
 
 	bt_hrs_cb_register(&hrs_cb);
 
 #if !defined(CONFIG_BT_EXT_ADV)
-	printk("Starting Legacy Advertising (connectable and scannable)\n");
+	LOG_INF("Starting Legacy Advertising (connectable and scannable)");
 	err = bt_le_adv_start(BT_LE_ADV_CONN, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
 	if (err) {
-		printk("Advertising failed to start (err %d)\n", err);
+		LOG_INF("Advertising failed to start (err %d)", err);
 		return 0;
 	}
 
@@ -224,36 +227,36 @@ int main(void)
 	};
 	struct bt_le_ext_adv *adv;
 
-	printk("Creating a Coded PHY connectable non-scannable advertising set\n");
+	LOG_INF("Creating a Coded PHY connectable non-scannable advertising set");
 	err = bt_le_ext_adv_create(&adv_param, NULL, &adv);
 	if (err) {
-		printk("Failed to create Coded PHY extended advertising set (err %d)\n", err);
+		LOG_INF("Failed to create Coded PHY extended advertising set (err %d)", err);
 
-		printk("Creating a non-Coded PHY connectable non-scannable advertising set\n");
+		LOG_INF("Creating a non-Coded PHY connectable non-scannable advertising set");
 		adv_param.options &= ~BT_LE_ADV_OPT_CODED;
 		err = bt_le_ext_adv_create(&adv_param, NULL, &adv);
 		if (err) {
-			printk("Failed to create extended advertising set (err %d)\n", err);
+			LOG_INF("Failed to create extended advertising set (err %d)", err);
 			return 0;
 		}
 	}
 
-	printk("Setting extended advertising data\n");
+	LOG_INF("Setting extended advertising data");
 	err = bt_le_ext_adv_set_data(adv, ad, ARRAY_SIZE(ad), NULL, 0);
 	if (err) {
-		printk("Failed to set extended advertising data (err %d)\n", err);
+		LOG_INF("Failed to set extended advertising data (err %d)", err);
 		return 0;
 	}
 
-	printk("Starting Extended Advertising (connectable non-scannable)\n");
+	LOG_INF("Starting Extended Advertising (connectable non-scannable)");
 	err = bt_le_ext_adv_start(adv, BT_LE_EXT_ADV_START_DEFAULT);
 	if (err) {
-		printk("Failed to start extended advertising set (err %d)\n", err);
+		LOG_INF("Failed to start extended advertising set (err %d)", err);
 		return 0;
 	}
 #endif /* CONFIG_BT_EXT_ADV */
 
-	printk("Advertising successfully started\n");
+	LOG_INF("Advertising successfully started");
 
 #if defined(HAS_LED)
 	err = blink_setup();
@@ -264,9 +267,42 @@ int main(void)
 	blink_start();
 #endif /* HAS_LED */
 
+	int sleep_cnt = 0;
+
 	/* Implement notification. */
 	while (1) {
 		k_sleep(K_SECONDS(1));
+		sleep_cnt++;
+
+		if (sleep_cnt == 10) {
+			LOG_INF("Disable Bluetooth");
+			if (bt_disable()) {
+				LOG_INF("error: bt_disable failed");
+				k_panic();
+			}
+
+			sleep_cnt = -10;
+			continue;
+		} else if (sleep_cnt > 0) {
+			/* Perform the operations while active. */
+		} else if (sleep_cnt == 0) {
+			LOG_INF("Enable Bluetooth");
+			if (bt_enable(NULL)) {
+				LOG_INF("error: bt_enable failed");
+				k_panic();
+			}
+			/* Restart advertising. */
+			LOG_INF("Starting Legacy Advertising (connectable and scannable)");
+			err = bt_le_adv_start(BT_LE_ADV_CONN, ad, ARRAY_SIZE(ad),
+					      sd, ARRAY_SIZE(sd));
+			if (err) {
+				LOG_INF("Advertising failed to start (err %d)", err);
+				return 0;
+			}
+		} else if (sleep_cnt < 0) {
+			/* Do nothing. BLE disabled. */
+			continue;
+		}
 
 		/* Heartrate measurements simulation */
 		hrs_notify();
@@ -282,10 +318,10 @@ int main(void)
 #endif /* HAS_LED */
 		} else if (atomic_test_and_clear_bit(state, STATE_DISCONNECTED)) {
 #if defined(CONFIG_BT_EXT_ADV)
-			printk("Starting Extended Advertising (connectable and non-scannable)\n");
+			LOG_INF("Starting Extended Advertising (connectable and non-scannable)");
 			err = bt_le_ext_adv_start(adv, BT_LE_EXT_ADV_START_DEFAULT);
 			if (err) {
-				printk("Failed to start extended advertising set (err %d)\n", err);
+				LOG_INF("Failed to start extended advertising set (err %d)", err);
 				return 0;
 			}
 #endif /* CONFIG_BT_EXT_ADV */
