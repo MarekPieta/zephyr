@@ -47,6 +47,7 @@ endchoice
 
 config SOC_FLASH_NRF_PARTIAL_ERASE
 	bool "Nordic nRFx flash driver partial erase"
+	default y if !SOC_FLASH_NRF_RADIO_SYNC_NONE
 	depends on HAS_HW_NRF_NVMC_PE
 	help
 	  Enable partial erase feature. Partial erase is performed in time
