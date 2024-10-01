@@ -129,6 +129,15 @@ config BT_DRIVER_RX_HIGH_PRIO
 	int
 	default 6
 
+config BT_CONN_TX_WQ_STACK_SIZE
+	int "Stack size of workqueue for connection TX notify processing"
+	default 1200
+
+config BT_CONN_TX_WQ_PRIO
+	# Hidden option for cooperative connection TX notify workqueue priority
+	int
+	default 8
+
 menu "Bluetooth Host"
 
 if BT_HCI_HOST

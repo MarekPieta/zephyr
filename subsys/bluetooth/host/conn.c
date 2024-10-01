@@ -52,6 +52,10 @@ LOG_MODULE_REGISTER(bt_conn);
 
 K_FIFO_DEFINE(free_tx);
 
+static bool conn_tx_workq_initialized;
+static struct k_work_q conn_tx_workq;
+static K_KERNEL_STACK_DEFINE(conn_tx_workq_thread_stack, CONFIG_BT_CONN_TX_WQ_STACK_SIZE);
+
 static void tx_free(struct bt_conn_tx *tx);
 
 static void conn_tx_destroy(struct bt_conn *conn, struct bt_conn_tx *tx)
@@ -254,12 +258,12 @@ static void tx_free(struct bt_conn_tx *tx)
 }
 
 #if defined(CONFIG_BT_CONN_TX)
-static void tx_notify(struct bt_conn *conn)
+static void tx_notify_process(struct bt_conn *conn)
 {
-	__ASSERT_NO_MSG(k_current_get() ==
-			k_work_queue_thread_get(&k_sys_work_q));
+	/* TX notify processing is done only from a single thread. */
+	__ASSERT_NO_MSG(k_current_get() == k_work_queue_thread_get(&conn_tx_workq));
 
-	LOG_DBG("conn %p", conn);
+	LOG_DBG("conn %p", (void *)conn);
 
 	while (1) {
 		struct bt_conn_tx *tx = NULL;
@@ -300,7 +304,29 @@ static void tx_notify(struct bt_conn *conn)
 		bt_tx_irq_raise();
 	}
 }
-#endif	/* CONFIG_BT_CONN_TX */
+#endif /* CONFIG_BT_CONN_TX */
+
+void bt_conn_tx_notify(struct bt_conn *conn, bool wait_for_completion)
+{
+#if defined(CONFIG_BT_CONN_TX)
+	/* Ensure that function is called only from a single context. */
+	if (k_current_get() == k_work_queue_thread_get(&conn_tx_workq)) {
+		tx_notify_process(conn);
+	} else {
+		struct k_work_sync sync;
+		int err;
+
+		err = k_work_submit_to_queue(&conn_tx_workq, &conn->tx_complete_work);
+		__ASSERT(err >= 0, "couldn't submit (err %d)", err);
+
+		if (wait_for_completion) {
+			(void)k_work_flush(&conn->tx_complete_work, &sync);
+		}
+	}
+#else
+	ARG_UNUSED(conn);
+#endif /* CONFIG_BT_CONN_TX */
+}
 
 struct bt_conn *bt_conn_new(struct bt_conn *conns, size_t size)
 {
@@ -439,38 +465,15 @@ static void bt_acl_recv(struct bt_conn *conn, struct net_buf *buf, uint8_t flags
 	bt_l2cap_recv(conn, buf, true);
 }
 
-static void wait_for_tx_work(struct bt_conn *conn)
-{
-#if defined(CONFIG_BT_CONN_TX)
-	LOG_DBG("conn %p", conn);
-
-	if (IS_ENABLED(CONFIG_BT_RECV_WORKQ_SYS) ||
-	    k_current_get() == k_work_queue_thread_get(&k_sys_work_q)) {
-		tx_notify(conn);
-	} else {
-		struct k_work_sync sync;
-		int err;
-
-		err = k_work_submit(&conn->tx_complete_work);
-		__ASSERT(err >= 0, "couldn't submit (err %d)", err);
-
-		k_work_flush(&conn->tx_complete_work, &sync);
-	}
-	LOG_DBG("done");
-#else
-	ARG_UNUSED(conn);
-#endif	/* CONFIG_BT_CONN_TX */
-}
-
 void bt_conn_recv(struct bt_conn *conn, struct net_buf *buf, uint8_t flags)
 {
 	/* Make sure we notify any pending TX callbacks before processing
 	 * new data for this connection.
 	 *
 	 * Always do so from the same context for sanity. In this case that will
-	 * be the system workqueue.
+	 * be a dedicated Bluetooth connection TX workqueue.
 	 */
-	wait_for_tx_work(conn);
+	bt_conn_tx_notify(conn, true);
 
 	LOG_DBG("handle %u len %u flags %02x", conn->handle, buf->len, flags);
 
@@ -788,6 +791,14 @@ static void conn_destroy(struct bt_conn *conn, void *data)
 void bt_conn_cleanup_all(void)
 {
 	bt_conn_foreach(BT_CONN_TYPE_ALL, conn_destroy, NULL);
+	if (conn_tx_workq_initialized) {
+		int ret = k_work_queue_drain(&conn_tx_workq, true);
+
+		/* No works are expected to be pending at this point. */
+		if (ret) {
+			LOG_ERR("conn_tx_workq drain returned: %d", ret);
+		}
+	}
 }
 
 #if defined(CONFIG_BT_CONN)
@@ -1250,7 +1261,7 @@ void bt_conn_set_state(struct bt_conn *conn, bt_conn_state_t state)
 		 */
 		switch (old_state) {
 		case BT_CONN_DISCONNECT_COMPLETE:
-			wait_for_tx_work(conn);
+			bt_conn_tx_notify(conn, true);
 
 			bt_conn_reset_rx_state(conn);
 
@@ -1641,12 +1652,9 @@ struct net_buf *bt_conn_create_pdu_timeout(struct net_buf_pool *pool,
 #if defined(CONFIG_BT_CONN_TX)
 static void tx_complete_work(struct k_work *work)
 {
-	struct bt_conn *conn = CONTAINER_OF(work, struct bt_conn,
-					    tx_complete_work);
+	struct bt_conn *conn = CONTAINER_OF(work, struct bt_conn, tx_complete_work);
 
-	LOG_DBG("conn %p", conn);
-
-	tx_notify(conn);
+	tx_notify_process(conn);
 }
 #endif /* CONFIG_BT_CONN_TX */
 
@@ -4026,6 +4034,25 @@ int bt_conn_init(void)
 
 			bt_conn_unref(conn);
 		}
+	}
+
+	if (conn_tx_workq_initialized) {
+		err = k_work_queue_unplug(&conn_tx_workq);
+		if (err) {
+			LOG_ERR("conn_tx_workq unplug returned: %d", err);
+		}
+	} else {
+		static const struct k_work_queue_config cfg = {
+			.name = "BT CONN TX WQ",
+			.no_yield = false,
+			.essential = false,
+		};
+
+		k_work_queue_init(&conn_tx_workq);
+		k_work_queue_start(&conn_tx_workq, conn_tx_workq_thread_stack,
+				   K_THREAD_STACK_SIZEOF(conn_tx_workq_thread_stack),
+				   K_PRIO_COOP(CONFIG_BT_CONN_TX_WQ_PRIO), &cfg);
+		conn_tx_workq_initialized = true;
 	}
 
 	return 0;
